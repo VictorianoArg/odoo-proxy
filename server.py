@@ -4,30 +4,37 @@ import requests
 app = Flask(__name__)
 
 ODOO_URL = "https://sexfun.odoo.com"
+session = requests.Session()
+
+def cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    return response
 
 @app.route("/proxy", methods=["POST", "OPTIONS"])
 def proxy():
     if request.method == "OPTIONS":
-        response = jsonify({})
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
-        return response
+        return cors(jsonify({}))
 
-    path = request.json.get("path", "/web/dataset/call_kw")
-    payload = request.json.get("payload", {})
+    body = request.get_json()
+    path = body.get("path", "/web/dataset/call_kw")
+    payload = body.get("payload", {})
 
-    resp = requests.post(
-        f"{ODOO_URL}{path}",
-        json=payload,
-        headers={"Content-Type": "application/json"},
-        cookies=request.cookies
-    )
+    try:
+        resp = session.post(
+            f"{ODOO_URL}{path}",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        return cors(jsonify(resp.json()))
+    except Exception as e:
+        return cors(jsonify({"error": {"message": str(e)}})), 500
 
-    response = jsonify(resp.json())
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.set_cookie("session_id", resp.cookies.get("session_id", ""))
-    return response
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
