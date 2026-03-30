@@ -1,7 +1,7 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import requests
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='.')
 
 ODOO_URL = "https://sexfun.odoo.com"
 session = requests.Session()
@@ -11,6 +11,10 @@ def cors(response):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
     return response
+
+@app.route("/", methods=["GET"])
+def index():
+    return send_from_directory('.', 'index.html')
 
 @app.route("/proxy", methods=["POST", "OPTIONS"])
 def proxy():
