@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory
 import xmlrpc.client
 import requests
+import json
 
 app = Flask(__name__, static_folder='.')
 
@@ -85,7 +86,6 @@ def ask():
         return cors(jsonify({"error": f"Error al consultar Odoo: {str(e)}"})), 500
 
     try:
-        import json
         resp = requests.post(
             "https://api.anthropic.com/v1/messages",
             headers={
@@ -94,7 +94,7 @@ def ask():
                 "anthropic-version": "2023-06-01"
             },
             json={
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-sonnet-4-5-20251001",
                 "max_tokens": 1000,
                 "system": "Sos un asistente de análisis de datos para SexFun, empresa argentina. Respondé en español, claro y conciso. Analizá solo los datos recibidos, nunca inventes. Si hay provincias argentinas, usá sus nombres completos. Presentá números y rankings ordenados.",
                 "messages": [{"role": "user", "content": f'Consulta: "{query}"\n\nDatos de Odoo:\n{json.dumps(data, ensure_ascii=False)}\n\nRespondé basándote únicamente en estos datos.'}]
@@ -102,8 +102,16 @@ def ask():
             timeout=30
         )
         result = resp.json()
+
+        if "error" in result:
+            return cors(jsonify({"error": f"Error de Claude: {result['error'].get('message', str(result['error']))}"})), 500
+
+        if "content" not in result:
+            return cors(jsonify({"error": f"Respuesta inesperada de Claude: {json.dumps(result)}"})), 500
+
         answer = result["content"][0]["text"]
         return cors(jsonify({"answer": answer}))
+
     except Exception as e:
         return cors(jsonify({"error": f"Error al consultar IA: {str(e)}"})), 500
 
