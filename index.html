@@ -15,12 +15,12 @@
   .dot.green { background: #4caf50; }
   .dot.red { background: #e53935; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 1.25rem; }
-  .chip { font-size: 12px; padding: 6px 14px; border-radius: 99px; border: 1px solid #ddd; color: #555; cursor: pointer; background: #fff; transition: all 0.15s; }
+  .chip { font-size: 12px; padding: 6px 14px; border-radius: 99px; border: 1px solid #ddd; color: #555; cursor: pointer; background: #fff; }
   .chip:hover { background: #f0f0f0; color: #111; }
   .input-area { background: #fff; border-radius: 12px; border: 1px solid #e5e5e5; padding: 14px; margin-bottom: 1.25rem; }
   textarea { width: 100%; font-size: 14px; border: none; outline: none; resize: none; height: 72px; font-family: inherit; color: #1a1a1a; background: transparent; }
   .input-footer { display: flex; justify-content: flex-end; margin-top: 8px; }
-  button.send { padding: 8px 20px; border-radius: 8px; border: 1px solid #ddd; background: #1a1a1a; color: #fff; font-size: 14px; cursor: pointer; }
+  button.send { padding: 8px 20px; border-radius: 8px; border: none; background: #1a1a1a; color: #fff; font-size: 14px; cursor: pointer; }
   button.send:hover { background: #333; }
   button.send:disabled { opacity: 0.4; cursor: not-allowed; }
   .messages { display: flex; flex-direction: column; gap: 12px; }
@@ -65,38 +65,15 @@
 </div>
 
 <script>
-const PROXY = '/proxy';
-const DB = 'sexfun';
-const USER = 'gerencia@sexfun.com.ar';
-const APIKEY = '34816db4a33311bf1ddb5d627ed8ca944d8edcba';
-let sessionId = null;
-
-async function odooCall(path, payload) {
-  const resp = await fetch(PROXY, {
+async function rpc(model, method, args, kwargs) {
+  const resp = await fetch('/rpc', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, payload })
+    body: JSON.stringify({ model, method, args, kwargs })
   });
   const data = await resp.json();
-  if (data.error) throw new Error(data.error.data?.message || data.error.message || JSON.stringify(data.error));
+  if (data.error) throw new Error(data.error);
   return data.result;
-}
-
-async function login() {
-  const result = await odooCall('/web/session/authenticate', {
-    jsonrpc: '2.0', method: 'call', id: 1,
-    params: { db: DB, login: USER, password: APIKEY }
-  });
-  if (!result?.uid) throw new Error('Autenticación fallida');
-  sessionId = result.session_id;
-  return result.uid;
-}
-
-async function rpc(model, method, args, kwargs) {
-  return odooCall('/web/dataset/call_kw', {
-    jsonrpc: '2.0', method: 'call', id: 1,
-    params: { model, method, args, kwargs }
-  });
 }
 
 async function fetchOdooData(query) {
@@ -109,7 +86,7 @@ async function fetchOdooData(query) {
       { fields: ['name','partner_id','amount_total','invoice_date','payment_state'], limit: 300, order: 'invoice_date desc' }
     );
     data.facturas = invoices;
-    const ids = [...new Set(invoices.map(i => i.partner_id?.[0]).filter(Boolean))];
+    const ids = [...new Set(invoices.map(i => Array.isArray(i.partner_id) ? i.partner_id[0] : null).filter(Boolean))];
     if (ids.length) {
       data.clientes = await rpc('res.partner', 'search_read',
         [[['id','in',ids]]],
@@ -149,7 +126,7 @@ async function askClaude(query, odooData) {
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
-      system: 'Sos un asistente de análisis de datos para SexFun, empresa argentina. Respondé en español, claro y conciso. Analizá solo los datos recibidos, nunca inventes. Si hay provincias, usá sus nombres completos. Presentá números y rankings ordenados.',
+      system: 'Sos un asistente de análisis de datos para SexFun, empresa argentina. Respondé en español, claro y conciso. Analizá solo los datos recibidos, nunca inventes. Si hay provincias argentinas, usá sus nombres completos. Presentá números y rankings ordenados.',
       messages: [{ role: 'user', content: `Consulta: "${query}"\n\nDatos de Odoo:\n${JSON.stringify(odooData, null, 2)}\n\nRespondé basándote únicamente en estos datos.` }]
     })
   });
@@ -178,12 +155,10 @@ async function sendQuery() {
   btn.disabled = true;
   document.getElementById('query').value = '';
   addMsg('user', query);
-  const body = addMsg('assistant', '<div class="dots"><span></span><span></span><span></span></div> Autenticando...');
+  const body = addMsg('assistant', '<div class="dots"><span></span><span></span><span></span></div> Obteniendo datos de Odoo...');
   try {
-    if (!sessionId) await login();
-    body.innerHTML = '<div class="dots"><span></span><span></span><span></span></div> Obteniendo datos de Odoo...';
     const odooData = await fetchOdooData(query);
-    body.innerHTML = '<div class="dots"><span></span><span></span><span></span></div> Analizando...';
+    body.innerHTML = '<div class="dots"><span></span><span></span><span></span></div> Analizando con IA...';
     const answer = await askClaude(query, odooData);
     body.innerHTML = answer.replace(/\n/g, '<br>');
   } catch (e) {
@@ -202,9 +177,14 @@ async function checkStatus() {
   const dot = document.getElementById('dot');
   const txt = document.getElementById('status-text');
   try {
-    await login();
-    dot.className = 'dot green';
-    txt.textContent = 'Conectado a sexfun.odoo.com ✓';
+    const resp = await fetch('/health');
+    const data = await resp.json();
+    if (data.status === 'ok') {
+      dot.className = 'dot green';
+      txt.textContent = 'Conectado a sexfun.odoo.com via XML-RPC ✓';
+    } else {
+      throw new Error(data.message);
+    }
   } catch (e) {
     dot.className = 'dot red';
     txt.textContent = 'Error: ' + e.message;
