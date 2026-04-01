@@ -65,76 +65,6 @@
 </div>
 
 <script>
-async function rpc(model, method, args, kwargs) {
-  const resp = await fetch('/rpc', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, method, args, kwargs })
-  });
-  const data = await resp.json();
-  if (data.error) throw new Error(data.error);
-  return data.result;
-}
-
-async function fetchOdooData(query) {
-  const q = query.toLowerCase();
-  const data = {};
-
-  if (q.includes('provincia') || q.includes('factur') || q.includes('cliente') || q.includes('venta') || q.includes('top') || q.includes('mes')) {
-    const invoices = await rpc('account.move', 'search_read',
-      [[['move_type','in',['out_invoice','out_refund']], ['state','=','posted']]],
-      { fields: ['name','partner_id','amount_total','invoice_date','payment_state'], limit: 300, order: 'invoice_date desc' }
-    );
-    data.facturas = invoices;
-    const ids = [...new Set(invoices.map(i => Array.isArray(i.partner_id) ? i.partner_id[0] : null).filter(Boolean))];
-    if (ids.length) {
-      data.clientes = await rpc('res.partner', 'search_read',
-        [[['id','in',ids]]],
-        { fields: ['id','name','state_id','country_id','city','vat'] }
-      );
-    }
-  }
-
-  if (q.includes('stock') || q.includes('producto') || q.includes('inventario') || q.includes('bajo')) {
-    data.productos = await rpc('product.product', 'search_read',
-      [[['type','=','product']]],
-      { fields: ['name','qty_available','virtual_available','list_price'], limit: 150 }
-    );
-  }
-
-  if (q.includes('pagar') || q.includes('deuda') || q.includes('pendiente') || q.includes('cobrar')) {
-    data.pendientes = await rpc('account.move', 'search_read',
-      [[['move_type','=','out_invoice'],['payment_state','in',['not_paid','partial']],['state','=','posted']]],
-      { fields: ['name','partner_id','amount_total','amount_residual','invoice_date_due'], limit: 100 }
-    );
-  }
-
-  if (q.includes('compra') || q.includes('proveedor')) {
-    data.compras = await rpc('purchase.order', 'search_read',
-      [[['state','in',['purchase','done']]]],
-      { fields: ['name','partner_id','amount_total','date_order'], limit: 100 }
-    );
-  }
-
-  return data;
-}
-
-async function askClaude(query, odooData) {
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: 'Sos un asistente de análisis de datos para SexFun, empresa argentina. Respondé en español, claro y conciso. Analizá solo los datos recibidos, nunca inventes. Si hay provincias argentinas, usá sus nombres completos. Presentá números y rankings ordenados.',
-      messages: [{ role: 'user', content: `Consulta: "${query}"\n\nDatos de Odoo:\n${JSON.stringify(odooData, null, 2)}\n\nRespondé basándote únicamente en estos datos.` }]
-    })
-  });
-  const data = await resp.json();
-  if (data.error) throw new Error(data.error.message);
-  return data.content[0].text;
-}
-
 function addMsg(type, html) {
   const wrap = document.getElementById('messages');
   const d = document.createElement('div');
@@ -155,12 +85,16 @@ async function sendQuery() {
   btn.disabled = true;
   document.getElementById('query').value = '';
   addMsg('user', query);
-  const body = addMsg('assistant', '<div class="dots"><span></span><span></span><span></span></div> Obteniendo datos de Odoo...');
+  const body = addMsg('assistant', '<div class="dots"><span></span><span></span><span></span></div> Consultando Odoo y analizando...');
   try {
-    const odooData = await fetchOdooData(query);
-    body.innerHTML = '<div class="dots"><span></span><span></span><span></span></div> Analizando con IA...';
-    const answer = await askClaude(query, odooData);
-    body.innerHTML = answer.replace(/\n/g, '<br>');
+    const resp = await fetch('/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query })
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    body.innerHTML = data.answer.replace(/\n/g, '<br>');
   } catch (e) {
     body.closest('.msg').className = 'msg error';
     body.closest('.msg').querySelector('.msg-label').textContent = 'Error';
@@ -181,10 +115,8 @@ async function checkStatus() {
     const data = await resp.json();
     if (data.status === 'ok') {
       dot.className = 'dot green';
-      txt.textContent = 'Conectado a sexfun.odoo.com via XML-RPC ✓';
-    } else {
-      throw new Error(data.message);
-    }
+      txt.textContent = 'Conectado a sexfun.odoo.com ✓';
+    } else throw new Error(data.message);
   } catch (e) {
     dot.className = 'dot red';
     txt.textContent = 'Error: ' + e.message;
